@@ -1,0 +1,74 @@
+name: Deploy TfL Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to server via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_SSH_PORT }}
+          script: |
+            # Step 1 — Pull latest TfL code
+            cd ${{ secrets.TFL_APP_PATH }}
+            git pull origin main
+
+            # Step 2 — Copy DAG into Airflow dags folder
+            cp ${{ secrets.TFL_APP_PATH }}/dags/tfl_pipeline.py \
+               ${{ secrets.NYC_APP_PATH }}/dags/tfl_pipeline.py
+
+            # Step 3 — Copy TfL source code into Airflow mount
+            cp -r ${{ secrets.TFL_APP_PATH }}/tfl/ \
+                  ${{ secrets.NYC_APP_PATH }}/tfl/
+
+            # Step 4 — Restart Airflow scheduler to pick up new DAG
+            cd ${{ secrets.NYC_APP_PATH }}
+            docker compose restart airflow-scheduler
+
+            # Step 5 — Wait for scheduler to be ready
+            echo "Waiting for scheduler to restart..."
+            sleep 15
+
+            # Step 6 — Verify containers still running
+            docker compose ps
+
+            # Step 7 — Confirm DAG file exists
+            ls ${{ secrets.NYC_APP_PATH }}/dags/tfl_pipeline.py && \
+              echo "DAG file deployed successfully ✅" || \
+              echo "DAG file missing ❌"
+
+      - name: Send failure email
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          secure: false
+          username: ${{ secrets.ALERT_EMAIL_USER }}
+          password: ${{ secrets.ALERT_EMAIL_PASSWORD }}
+          subject: "❌ TfL Pipeline Deploy Failed"
+          to: ${{ secrets.ALERT_EMAIL_USER }}
+          from: ${{ secrets.ALERT_EMAIL_USER }}
+          body: |
+            🚨 TfL Pipeline deployment FAILED!
+
+            Repository: tfl-transport-pipeline
+            Branch: main
+            Triggered by: ${{ github.actor }}
+            Commit: ${{ github.sha }}
+            Message: ${{ github.event.head_commit.message }}
+
+            Check the Actions log:
+            https://github.com/${{ github.repository }}/actions
