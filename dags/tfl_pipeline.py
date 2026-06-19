@@ -97,13 +97,18 @@ def transform(**context) -> None:
         raise AirflowFailException("Transformed air_quality is empty.")
 
     # Convert DataFrames to dict for XCom serialization
-    context["ti"].xcom_push(
-        key="transformed_data",
-        value={
-            name: df.to_dict(orient="records")
-            for name, df in transformed.items()
-        }
-    )
+    # Convert all datetime/date objects to strings to avoid JSON serialization issues
+    serializable = {}
+    for name, df in transformed.items():
+        # Convert datetime columns to ISO string format
+        for col in df.select_dtypes(include=["datetime64[ns, UTC]", "datetime64[ns]", "object"]).columns:
+            try:
+                df[col] = df[col].astype(str)
+            except Exception:
+                pass
+        serializable[name] = df.to_dict(orient="records")
+
+    context["ti"].xcom_push(key="transformed_data", value=serializable)
 
     print(f"Transformed — "
           f"line_status: {len(transformed['line_status'])} rows, "
