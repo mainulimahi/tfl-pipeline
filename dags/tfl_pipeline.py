@@ -128,10 +128,17 @@ def load(**context) -> None:
         raise AirflowFailException("No transformed data found in XCom.")
 
     # Reconstruct DataFrames from XCom dicts
-    transformed = {
-        name: pd.DataFrame(records)
-        for name, records in transformed_raw.items()
-    }
+    transformed = {}
+    for name, records in transformed_raw.items():
+        df = pd.DataFrame(records)
+
+        # Convert string timestamps back to datetime objects for ClickHouse
+        if "extracted_at" in df.columns:
+            df["extracted_at"] = pd.to_datetime(df["extracted_at"], utc=True)
+        if "extracted_date" in df.columns:
+            df["extracted_date"] = pd.to_datetime(df["extracted_date"]).dt.date
+
+        transformed[name] = df
 
     # Get today's date for Gold table partitioning
     extracted_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -139,7 +146,6 @@ def load(**context) -> None:
     load_all(transformed, extracted_date)
 
     print(f"Loaded all data into ClickHouse for {extracted_date}")
-
 
 def validate_load(**context) -> None:
     """Validate data was successfully loaded into ClickHouse."""
