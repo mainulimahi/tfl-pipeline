@@ -154,11 +154,16 @@ def build_gold_tables(extracted_date: str) -> None:
     """
     Build Gold layer aggregations from Bronze tables.
     Runs SQL inside ClickHouse — ELT pattern.
+    Idempotent: safe to call multiple times for the same date.
     """
     client = get_client()
     db = os.environ.get("CLICKHOUSE_DB", "tfl_pipeline")
 
-    # Gold: Daily line disruption summary
+    # --- Line summary ---
+    client.command(f"""
+        ALTER TABLE {db}.gold_daily_line_summary
+        DELETE WHERE summary_date = '{extracted_date}'
+    """)
     client.command(f"""
         INSERT INTO {db}.gold_daily_line_summary
         SELECT
@@ -177,9 +182,13 @@ def build_gold_tables(extracted_date: str) -> None:
         WHERE extracted_date = '{extracted_date}'
         GROUP BY extracted_date, line_id, line_name
     """)
-    logger.info(f"Built gold_daily_line_summary for {extracted_date}")
+    logger.info(f"Rebuilt gold_daily_line_summary for {extracted_date}")
 
-    # Gold: Daily bike availability summary
+    # --- Bike summary ---
+    client.command(f"""
+        ALTER TABLE {db}.gold_daily_bike_summary
+        DELETE WHERE summary_date = '{extracted_date}'
+    """)
     client.command(f"""
         INSERT INTO {db}.gold_daily_bike_summary
         SELECT
@@ -196,9 +205,13 @@ def build_gold_tables(extracted_date: str) -> None:
         WHERE extracted_date = '{extracted_date}'
         GROUP BY extracted_date, station_id, name, lat, lon
     """)
-    logger.info(f"Built gold_daily_bike_summary for {extracted_date}")
+    logger.info(f"Rebuilt gold_daily_bike_summary for {extracted_date}")
 
-    # Gold: Daily air quality
+    # --- Air quality summary ---
+    client.command(f"""
+        ALTER TABLE {db}.gold_daily_air_quality
+        DELETE WHERE summary_date = '{extracted_date}'
+    """)
     client.command(f"""
         INSERT INTO {db}.gold_daily_air_quality
         SELECT
@@ -215,7 +228,7 @@ def build_gold_tables(extracted_date: str) -> None:
         WHERE extracted_date = '{extracted_date}'
         GROUP BY extracted_date, forecast_type, forecast_band
     """)
-    logger.info(f"Built gold_daily_air_quality for {extracted_date}")
+    logger.info(f"Rebuilt gold_daily_air_quality for {extracted_date}")
 
     client.close()
 
