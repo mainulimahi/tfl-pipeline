@@ -101,6 +101,22 @@ def init_database() -> None:
         ORDER BY (summary_date, line_id)
     """)
 
+    # Gold: Hourly Line Summary (intraday granularity)
+    client.command(f"""
+        CREATE TABLE IF NOT EXISTS {db}.gold_hourly_line_summary (
+            summary_date         Date,
+            summary_hour         UInt8,
+            line_id              String,
+            line_name            String,
+            total_snapshots      Int32,
+            disrupted_snapshots  Int32,
+            disruption_rate_pct  Float64,
+            avg_severity         Float64
+        )
+        ENGINE = MergeTree()
+        ORDER BY (summary_date, summary_hour, line_id)
+    """)
+
     # Gold: Daily Bike Summary
     client.command(f"""
         CREATE TABLE IF NOT EXISTS {db}.gold_daily_bike_summary (
@@ -116,6 +132,24 @@ def init_database() -> None:
         )
         ENGINE = MergeTree()
         ORDER BY (summary_date, station_id)
+    """)
+
+    # Gold: Hourly Bike Summary (intraday granularity)
+    client.command(f"""
+        CREATE TABLE IF NOT EXISTS {db}.gold_hourly_bike_summary (
+            summary_date        Date,
+            summary_hour        UInt8,
+            station_id          Int32,
+            name                String,
+            lat                 Float64,
+            lon                 Float64,
+            avg_bikes           Float64,
+            avg_empty_docks     Float64,
+            avg_occupancy_pct   Float64,
+            total_snapshots     Int32
+        )
+        ENGINE = MergeTree()
+        ORDER BY (summary_date, summary_hour, station_id)
     """)
 
     # Gold: Daily Air Quality Summary
@@ -139,14 +173,18 @@ def init_database() -> None:
     client.close()
 
 
-def load_dataframe(df: pd.DataFrame, table: str) -> None:
-    """Load a pandas DataFrame into a ClickHouse table."""
+def load_dataframe(df: pd.DataFrame, table: str, extracted_date: str) -> None:
+    """Load a pandas DataFrame into a ClickHouse table, replacing any existing rows for this date."""
     client = get_client()
     db = os.environ.get("CLICKHOUSE_DB", "tfl_pipeline")
     full_table = f"{db}.{table}"
 
+    client.command(f"""
+        ALTER TABLE {full_table}
+        DELETE WHERE extracted_date = '{extracted_date}'
+    """)
     client.insert_df(full_table, df)
-    logger.info(f"Loaded {len(df)} rows into {full_table}")
+    logger.info(f"Loaded {len(df)} rows into {full_table} for {extracted_date}")
     client.close()
 
 
@@ -155,11 +193,14 @@ def build_gold_tables(extracted_date: str) -> None:
     Build Gold layer aggregations from Bronze tables.
     Runs SQL inside ClickHouse — ELT pattern.
     Idempotent: safe to call multiple times for the same date.
+
+    Builds both daily and hourly grains for lines and bikes,
+    daily-only for air quality (low intraday value at 2 rows/day).
     """
     client = get_client()
     db = os.environ.get("CLICKHOUSE_DB", "tfl_pipeline")
 
-    # --- Line summary ---
+    # --- Line summary: daily ---
     client.command(f"""
         ALTER TABLE {db}.gold_daily_line_summary
         DELETE WHERE summary_date = '{extracted_date}'
@@ -184,7 +225,31 @@ def build_gold_tables(extracted_date: str) -> None:
     """)
     logger.info(f"Rebuilt gold_daily_line_summary for {extracted_date}")
 
-    # --- Bike summary ---
+    # --- Line summary: hourly ---
+    client.command(f"""
+        ALTER TABLE {db}.gold_hourly_line_summary
+        DELETE WHERE summary_date = '{extracted_date}'
+    """)
+    client.command(f"""
+        INSERT INTO {db}.gold_hourly_line_summary
+        SELECT
+            toDate(extracted_at)            AS summary_date,
+            toHour(extracted_at)            AS summary_hour,
+            line_id,
+            line_name,
+            count(*)                        AS total_snapshots,
+            countIf(is_disrupted = true)    AS disrupted_snapshots,
+            round(
+                countIf(is_disrupted = true) * 100.0 / count(*), 2
+            )                               AS disruption_rate_pct,
+            round(avg(status_severity), 2)  AS avg_severity
+        FROM {db}.bronze_line_status
+        WHERE extracted_date = '{extracted_date}'
+        GROUP BY summary_date, summary_hour, line_id, line_name
+    """)
+    logger.info(f"Rebuilt gold_hourly_line_summary for {extracted_date}")
+
+    # --- Bike summary: daily ---
     client.command(f"""
         ALTER TABLE {db}.gold_daily_bike_summary
         DELETE WHERE summary_date = '{extracted_date}'
@@ -207,7 +272,31 @@ def build_gold_tables(extracted_date: str) -> None:
     """)
     logger.info(f"Rebuilt gold_daily_bike_summary for {extracted_date}")
 
-    # --- Air quality summary ---
+    # --- Bike summary: hourly ---
+    client.command(f"""
+        ALTER TABLE {db}.gold_hourly_bike_summary
+        DELETE WHERE summary_date = '{extracted_date}'
+    """)
+    client.command(f"""
+        INSERT INTO {db}.gold_hourly_bike_summary
+        SELECT
+            toDate(extracted_at)        AS summary_date,
+            toHour(extracted_at)        AS summary_hour,
+            station_id,
+            name,
+            lat,
+            lon,
+            round(avg(nb_bikes), 2)        AS avg_bikes,
+            round(avg(nb_empty_docks), 2)  AS avg_empty_docks,
+            round(avg(occupancy_pct), 2)   AS avg_occupancy_pct,
+            count(*)                       AS total_snapshots
+        FROM {db}.bronze_bike_points
+        WHERE extracted_date = '{extracted_date}'
+        GROUP BY summary_date, summary_hour, station_id, name, lat, lon
+    """)
+    logger.info(f"Rebuilt gold_hourly_bike_summary for {extracted_date}")
+
+    # --- Air quality summary: daily only ---
     client.command(f"""
         ALTER TABLE {db}.gold_daily_air_quality
         DELETE WHERE summary_date = '{extracted_date}'
@@ -236,15 +325,15 @@ def build_gold_tables(extracted_date: str) -> None:
 def load_all(transformed: dict, extracted_date: str) -> None:
     """
     Load all transformed DataFrames into ClickHouse Bronze tables,
-    then build Gold aggregations.
+    then build Gold aggregations (daily + hourly grains).
     """
     logger.info("Initialising database and tables...")
     init_database()
 
     logger.info("Loading Bronze tables...")
-    load_dataframe(transformed["line_status"], "bronze_line_status")
-    load_dataframe(transformed["bike_points"], "bronze_bike_points")
-    load_dataframe(transformed["air_quality"], "bronze_air_quality")
+    load_dataframe(transformed["line_status"], "bronze_line_status", extracted_date)
+    load_dataframe(transformed["bike_points"], "bronze_bike_points", extracted_date)
+    load_dataframe(transformed["air_quality"], "bronze_air_quality", extracted_date)
 
     logger.info("Building Gold tables...")
     build_gold_tables(extracted_date)

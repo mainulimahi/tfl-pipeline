@@ -207,7 +207,7 @@ def validate_load(**context) -> None:
 
 with DAG(
     dag_id="tfl_pipeline",
-    schedule="0 6 * * *",      # Daily at 6am UTC (different from NYC midnight)
+    schedule="0 */4 8-20 * * *",   # every 4 hours, 8am–8pm UTC — buffered away from NYC's midnight run
     start_date=datetime(2024, 1, 1),
     catchup=False,
     tags=["tfl", "transport", "clickhouse", "london"],
