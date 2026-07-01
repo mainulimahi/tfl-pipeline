@@ -321,7 +321,7 @@ def build_gold_tables(extracted_date: str) -> None:
 
     client.close()
 
-
+#load_all function to load all transformed DataFrames into ClickHouse Bronze tables and build Gold aggregations
 def load_all(transformed: dict, extracted_date: str) -> None:
     """
     Load all transformed DataFrames into ClickHouse Bronze tables,
