@@ -195,7 +195,7 @@ def load_dataframe(df: pd.DataFrame, table: str, extracted_date: str) -> None:
     # table had accumulated enough history — e.g. bronze_bike_points).
     # Requires the table to be PARTITION BY toYYYYMMDD(<date column>),
     # see init_database().
-    client.command(f"ALTER TABLE {full_table} DROP PARTITION IF EXISTS '{partition_id}'")
+    client.command(f"ALTER TABLE {full_table} DROP PARTITION '{partition_id}'")
     client.insert_df(full_table, df)
     logger.info(f"Loaded {len(df)} rows into {full_table} for {extracted_date}")
     client.close()
@@ -216,7 +216,7 @@ def build_gold_tables(extracted_date: str) -> None:
 
     # --- Line summary: daily ---
     client.command(
-        f"ALTER TABLE {db}.gold_daily_line_summary DROP PARTITION IF EXISTS '{partition_id}'"
+        f"ALTER TABLE {db}.gold_daily_line_summary DROP PARTITION '{partition_id}'"
     )
     client.command(f"""
         INSERT INTO {db}.gold_daily_line_summary
@@ -240,7 +240,7 @@ def build_gold_tables(extracted_date: str) -> None:
 
     # --- Line summary: hourly ---
     client.command(
-        f"ALTER TABLE {db}.gold_hourly_line_summary DROP PARTITION IF EXISTS '{partition_id}'"
+        f"ALTER TABLE {db}.gold_hourly_line_summary DROP PARTITION '{partition_id}'"
     )
     client.command(f"""
         INSERT INTO {db}.gold_hourly_line_summary
@@ -263,7 +263,7 @@ def build_gold_tables(extracted_date: str) -> None:
 
     # --- Bike summary: daily ---
     client.command(
-        f"ALTER TABLE {db}.gold_daily_bike_summary DROP PARTITION IF EXISTS '{partition_id}'"
+        f"ALTER TABLE {db}.gold_daily_bike_summary DROP PARTITION '{partition_id}'"
     )
     client.command(f"""
         INSERT INTO {db}.gold_daily_bike_summary
@@ -285,7 +285,7 @@ def build_gold_tables(extracted_date: str) -> None:
 
     # --- Bike summary: hourly ---
     client.command(
-        f"ALTER TABLE {db}.gold_hourly_bike_summary DROP PARTITION IF EXISTS '{partition_id}'"
+        f"ALTER TABLE {db}.gold_hourly_bike_summary DROP PARTITION '{partition_id}'"
     )
     client.command(f"""
         INSERT INTO {db}.gold_hourly_bike_summary
@@ -308,7 +308,7 @@ def build_gold_tables(extracted_date: str) -> None:
 
     # --- Air quality summary: daily only ---
     client.command(
-        f"ALTER TABLE {db}.gold_daily_air_quality DROP PARTITION IF EXISTS '{partition_id}'"
+        f"ALTER TABLE {db}.gold_daily_air_quality DROP PARTITION '{partition_id}'"
     )
     client.command(f"""
         INSERT INTO {db}.gold_daily_air_quality

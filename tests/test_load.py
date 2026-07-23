@@ -13,8 +13,8 @@ class FakeClickHouseClient:
     Simulates DROP PARTITION as immediate (it's metadata-only in real
     ClickHouse, unlike ALTER ... DELETE which is an async mutation) — this
     checks that load_dataframe's code path is correct (drop-before-insert,
-    correct partition id, IF EXISTS), not ClickHouse's own guarantees,
-    which can only be observed against a real server.
+    correct partition id), not ClickHouse's own guarantees, which can only
+    be observed against a real server.
     """
 
     def __init__(self):
@@ -25,7 +25,7 @@ class FakeClickHouseClient:
 
     def command(self, sql, settings=None):
         self.command_calls.append(sql)
-        match = re.search(r"DROP PARTITION IF EXISTS '(\d+)'", sql)
+        match = re.search(r"DROP PARTITION '(\d+)'", sql)
         if match:
             partition_id = match.group(1)
             self.rows = [
@@ -60,7 +60,7 @@ def test_load_dataframe_drops_partition_before_insert():
         )
 
     assert len(fake.command_calls) == 1
-    assert "DROP PARTITION IF EXISTS '20260720'" in fake.command_calls[0]
+    assert "DROP PARTITION '20260720'" in fake.command_calls[0]
     assert "bronze_bike_points" in fake.command_calls[0]
     assert len(fake.insert_calls) == 1
     assert len(fake.rows) == 3
