@@ -42,6 +42,7 @@ def init_database() -> None:
             is_disrupted     Bool
         )
         ENGINE = MergeTree()
+        PARTITION BY toYYYYMMDD(extracted_date)
         ORDER BY (extracted_date, line_id)
     """)
 
@@ -62,6 +63,7 @@ def init_database() -> None:
             availability_status String
         )
         ENGINE = MergeTree()
+        PARTITION BY toYYYYMMDD(extracted_date)
         ORDER BY (extracted_date, station_id)
     """)
 
@@ -81,6 +83,7 @@ def init_database() -> None:
             so2_band         String
         )
         ENGINE = MergeTree()
+        PARTITION BY toYYYYMMDD(extracted_date)
         ORDER BY (extracted_date, forecast_type)
     """)
 
@@ -98,6 +101,7 @@ def init_database() -> None:
             avg_severity         Float64
         )
         ENGINE = MergeTree()
+        PARTITION BY toYYYYMMDD(summary_date)
         ORDER BY (summary_date, line_id)
     """)
 
@@ -114,6 +118,7 @@ def init_database() -> None:
             avg_severity         Float64
         )
         ENGINE = MergeTree()
+        PARTITION BY toYYYYMMDD(summary_date)
         ORDER BY (summary_date, summary_hour, line_id)
     """)
 
@@ -131,6 +136,7 @@ def init_database() -> None:
             total_snapshots     Int32
         )
         ENGINE = MergeTree()
+        PARTITION BY toYYYYMMDD(summary_date)
         ORDER BY (summary_date, station_id)
     """)
 
@@ -149,6 +155,7 @@ def init_database() -> None:
             total_snapshots     Int32
         )
         ENGINE = MergeTree()
+        PARTITION BY toYYYYMMDD(summary_date)
         ORDER BY (summary_date, summary_hour, station_id)
     """)
 
@@ -166,6 +173,7 @@ def init_database() -> None:
             so2_band        String
         )
         ENGINE = MergeTree()
+        PARTITION BY toYYYYMMDD(summary_date)
         ORDER BY (summary_date, forecast_type)
     """)
 
@@ -178,11 +186,16 @@ def load_dataframe(df: pd.DataFrame, table: str, extracted_date: str) -> None:
     client = get_client()
     db = os.environ.get("CLICKHOUSE_DB", "tfl_pipeline")
     full_table = f"{db}.{table}"
+    partition_id = extracted_date.replace("-", "")
 
-    client.command(f"""
-        ALTER TABLE {full_table}
-        DELETE WHERE extracted_date = '{extracted_date}'
-    """)
+    # DROP PARTITION is metadata-only — atomic and synchronous, unlike
+    # ALTER ... DELETE which queues an async mutation that can complete
+    # AFTER the insert_df below and wipe the rows we just loaded (mutation
+    # cost scales with total table size, so this only showed up once a
+    # table had accumulated enough history — e.g. bronze_bike_points).
+    # Requires the table to be PARTITION BY toYYYYMMDD(<date column>),
+    # see init_database().
+    client.command(f"ALTER TABLE {full_table} DROP PARTITION IF EXISTS '{partition_id}'")
     client.insert_df(full_table, df)
     logger.info(f"Loaded {len(df)} rows into {full_table} for {extracted_date}")
     client.close()
@@ -199,12 +212,12 @@ def build_gold_tables(extracted_date: str) -> None:
     """
     client = get_client()
     db = os.environ.get("CLICKHOUSE_DB", "tfl_pipeline")
+    partition_id = extracted_date.replace("-", "")
 
     # --- Line summary: daily ---
-    client.command(f"""
-        ALTER TABLE {db}.gold_daily_line_summary
-        DELETE WHERE summary_date = '{extracted_date}'
-    """)
+    client.command(
+        f"ALTER TABLE {db}.gold_daily_line_summary DROP PARTITION IF EXISTS '{partition_id}'"
+    )
     client.command(f"""
         INSERT INTO {db}.gold_daily_line_summary
         SELECT
@@ -226,10 +239,9 @@ def build_gold_tables(extracted_date: str) -> None:
     logger.info(f"Rebuilt gold_daily_line_summary for {extracted_date}")
 
     # --- Line summary: hourly ---
-    client.command(f"""
-        ALTER TABLE {db}.gold_hourly_line_summary
-        DELETE WHERE summary_date = '{extracted_date}'
-    """)
+    client.command(
+        f"ALTER TABLE {db}.gold_hourly_line_summary DROP PARTITION IF EXISTS '{partition_id}'"
+    )
     client.command(f"""
         INSERT INTO {db}.gold_hourly_line_summary
         SELECT
@@ -250,10 +262,9 @@ def build_gold_tables(extracted_date: str) -> None:
     logger.info(f"Rebuilt gold_hourly_line_summary for {extracted_date}")
 
     # --- Bike summary: daily ---
-    client.command(f"""
-        ALTER TABLE {db}.gold_daily_bike_summary
-        DELETE WHERE summary_date = '{extracted_date}'
-    """)
+    client.command(
+        f"ALTER TABLE {db}.gold_daily_bike_summary DROP PARTITION IF EXISTS '{partition_id}'"
+    )
     client.command(f"""
         INSERT INTO {db}.gold_daily_bike_summary
         SELECT
@@ -273,10 +284,9 @@ def build_gold_tables(extracted_date: str) -> None:
     logger.info(f"Rebuilt gold_daily_bike_summary for {extracted_date}")
 
     # --- Bike summary: hourly ---
-    client.command(f"""
-        ALTER TABLE {db}.gold_hourly_bike_summary
-        DELETE WHERE summary_date = '{extracted_date}'
-    """)
+    client.command(
+        f"ALTER TABLE {db}.gold_hourly_bike_summary DROP PARTITION IF EXISTS '{partition_id}'"
+    )
     client.command(f"""
         INSERT INTO {db}.gold_hourly_bike_summary
         SELECT
@@ -297,10 +307,9 @@ def build_gold_tables(extracted_date: str) -> None:
     logger.info(f"Rebuilt gold_hourly_bike_summary for {extracted_date}")
 
     # --- Air quality summary: daily only ---
-    client.command(f"""
-        ALTER TABLE {db}.gold_daily_air_quality
-        DELETE WHERE summary_date = '{extracted_date}'
-    """)
+    client.command(
+        f"ALTER TABLE {db}.gold_daily_air_quality DROP PARTITION IF EXISTS '{partition_id}'"
+    )
     client.command(f"""
         INSERT INTO {db}.gold_daily_air_quality
         SELECT
